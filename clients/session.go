@@ -11,6 +11,8 @@ import (
 	"github.com/VolantMQ/volantmq/packet"
 	"github.com/VolantMQ/volantmq/subscriber"
 	"github.com/VolantMQ/volantmq/types"
+	"unsafe"
+	"encoding/binary"
 )
 
 type exitReason int
@@ -195,10 +197,53 @@ func (s *session) getRuntimeState()*persistence.SessionState{
 
 	if s.subscriber != nil {
 		state.Version = byte(s.subscriber.Version())
-		state.LastCompletedSubscribedMessageUniqueIds = s.conn.GetLastCompletedSubscribedMessageUniqueTopicIds()
+		state.Subscriptions = s.GenPersistSubscriptions()
 	}
 	return state
 }
+
+func (s *session) GenPersistSubscriptions()[]byte{
+	if s.subscriber == nil || !s.subscriber.HasSubscriptions(){
+		return nil
+	}
+	topics := s.subscriber.Subscriptions()
+	if len(topics) < 1 {
+		return nil
+	}
+	// calculate size of the encoded entry
+	// consist of:
+	//  _ _ _ _ _     _ _ _ _ _ _
+	// |_|_|_|_|_|...|_|_|_|_|_|_|
+	//  ___ _ _________ _ _______
+	//   |  |     |     |    |
+	//   |  |     |     |    4 bytes - subscription id
+	//   |  |     |     | 1 byte - topic options
+	//   |  |     | n bytes - topic
+	//   |  | 1 bytes - protocol version
+	//   | 2 bytes - length prefix
+
+	size := 0
+	for topic := range topics {
+		size += 2 + len(topic) + 1 + int(unsafe.Sizeof(uint32(0)))
+	}
+
+	buf := make([]byte, size+1)
+	offset := 0
+
+	buf[offset] = byte(s.subscriber.Version())
+	offset++
+
+	for s, params := range topics {
+		total, _ := packet.WriteLPBytes(buf[offset:], []byte(s))
+		offset += total
+		buf[offset] = byte(params.Ops)
+		offset++
+		binary.BigEndian.PutUint32(buf[offset:], params.ID)
+		offset += 4
+	}
+	return buf
+}
+
 
 // setOnline try switch session state from offline to online. This is necessary when
 // when previous network connection has set session expiry or will delay or both

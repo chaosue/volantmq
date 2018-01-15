@@ -71,7 +71,6 @@ type PreConfig struct {
 	AuthMethod       string
 	AuthData         []byte
 	PersistedSession persistence.Sessions
-	WasPersisted     bool
 	Metric           systree.Metric
 	Conn             net.Conn
 	Auth             auth.SessionPermissions
@@ -382,8 +381,6 @@ func (s *Type) loadPersistence() error {
 
 	// load session state.
 	if state, _:= s.PersistedSession.StateGet([]byte(s.ID)); state != nil {
-		s.WasPersisted = true
-		s.SetLastCompletedSubscribedMessageUniqueTopicIds(state.LastCompletedSubscribedMessageUniqueIds)
 		s.log.Debug("Persisted session state loaded:", zap.String("ClientID", s.ID), zap.Any("state", *state))
 	} else {
 		s.log.Debug("No persisted session state found:", zap.String("ClientID", s.ID))
@@ -529,9 +526,6 @@ func (s *Type) onReleaseOut(o, n packet.Provider) {
 			s.signalQuota()
 		}
 	}
-	if p, ok := o.(*packet.Publish); ok {
-		s.StoreLastCompletedSubscribedMessageUniqueId(p)
-	}
 }
 
 func (s *Type) preProcessPublishV50(p *packet.Publish) error {
@@ -582,22 +576,4 @@ func (s *Type) postProcessPublishV50(p *packet.Publish) error {
 	}
 
 	return nil
-}
-
-func (s *Type) StoreLastCompletedSubscribedMessageUniqueId(p *packet.Publish){
-	s.lastCompletedSubscribedMessageUniqueIds.Store(p)
-}
-
-// SubscribedMessageCompleted checks it the PUBLISH packet has been completed by the remove subscriber ever before.
-// this is to insure QoS1 or QoS 2
-func (s *Type) SubscribedMessageCompleted(p *packet.Publish)bool{
-	return s.lastCompletedSubscribedMessageUniqueIds.Exists(p)
-}
-
-func (s *Type) GetLastCompletedSubscribedMessageUniqueTopicIds()*map[string]int64{
-	return s.lastCompletedSubscribedMessageUniqueIds.topics
-}
-
-func (s *Type) SetLastCompletedSubscribedMessageUniqueTopicIds(topicIds *map[string]int64){
-	s.lastCompletedSubscribedMessageUniqueIds.topics = topicIds
 }

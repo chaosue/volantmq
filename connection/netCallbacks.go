@@ -261,6 +261,7 @@ func (s *Type) onSubscribe(msg *packet.Subscribe) packet.Provider {
 		} else {
 			reason = packet.ReasonCode(grantedQoS)
 			retainedPublishes = append(retainedPublishes, retained...)
+			s.log.Debug("Client subscribed topic.", zap.String("ClientID", s.ID), zap.String("Topic", t))
 		}
 
 		retCodes = append(retCodes, reason)
@@ -270,19 +271,8 @@ func (s *Type) onSubscribe(msg *packet.Subscribe) packet.Provider {
 		return nil
 	}
 
-	// if the session has been persisted before, then all subscribed messages, including the retained,
-	// should also have been put into its persisted message packets which will be loaded to the queues
-	// when loadSession.
-	if s.WasPersisted {
-		s.log.Debug("Persisted session state loaded, skip re-push retained messages which will be pushed from the persisted packets:", zap.String("ClientID", s.ID))
-		return resp
-	}
 	// Now put retained messages into publish queue
 	for _, rp := range retainedPublishes {
-		if s.SubscribedMessageCompleted(rp){
-			s.log.Debug("Skip completed retained message:", zap.String("ClientID", s.ID), zap.Int64("MessageID", rp.GetCreateTimestamp()))
-			continue
-		}
 		if pkt, err := rp.Clone(s.Version); err == nil {
 			pkt.SetRetain(true)
 			s.onSubscribedPublish(pkt)
@@ -304,6 +294,7 @@ func (s *Type) onUnSubscribe(msg *packet.UnSubscribe) packet.Provider {
 		reason := packet.CodeSuccess
 
 		if authorized {
+			s.log.Debug("Unsubscribing client subscription", zap.String("ClientID", s.ID), zap.String("topic", t))
 			if err := s.Subscriber.UnSubscribe(t); err != nil {
 				s.log.Error("Couldn't unsubscribe from topic", zap.Error(err))
 			} else {

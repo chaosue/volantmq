@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	"unsafe"
 
 	"github.com/VolantMQ/persistence"
 	"github.com/VolantMQ/volantmq/auth"
@@ -125,8 +124,6 @@ func (m *Manager) Shutdown() error {
 	})
 
 	m.sessionsCount.Wait()
-
-	m.storeSubscribers() // nolint: errcheck
 
 	return nil
 }
@@ -749,58 +746,16 @@ func (m *Manager) loadSubscriber(from []byte) (*subscriberConfig, error) {
 	}, nil
 }
 
-func (m *Manager) persistSubscriptions(id string, s subscriber.ConnectionProvider)(err error) {
-	topics := s.Subscriptions()
-	// calculate size of the encoded entry
-	// consist of:
-	//  _ _ _ _ _     _ _ _ _ _ _
-	// |_|_|_|_|_|...|_|_|_|_|_|_|
-	//  ___ _ _________ _ _______
-	//   |  |     |     |    |
-	//   |  |     |     |    4 bytes - subscription id
-	//   |  |     |     | 1 byte - topic options
-	//   |  |     | n bytes - topic
-	//   |  | 1 bytes - protocol version
-	//   | 2 bytes - length prefix
-
-	size := 0
-	for topic := range topics {
-		size += 2 + len(topic) + 1 + int(unsafe.Sizeof(uint32(0)))
+func (m *Manager) persistSubscriptions(s *session)(err error) {
+	buf := s.GenPersistSubscriptions()
+	if buf == nil {
+		return nil
 	}
-
-	buf := make([]byte, size+1)
-	offset := 0
-	buf[offset] = byte(s.Version())
-	offset++
-
-	for s, params := range topics {
-		total, _ := packet.WriteLPBytes(buf[offset:], []byte(s))
-		offset += total
-		buf[offset] = byte(params.Ops)
-		offset++
-		binary.BigEndian.PutUint32(buf[offset:], params.ID)
-		offset += 4
-	}
-
-	m.log.Debug("Persisting client subscriptions...", zap.String("ClientID", id), zap.Any("Subscrptions", topics))
-	if err = m.persistence.SubscriptionsStore([]byte(id), buf); err != nil {
-		m.log.Error("Couldn't persist subscriptions", zap.String("ClientID", id), zap.Error(err))
+	m.log.Debug("Persisting client subscriptions...", zap.String("ClientID", s.id), zap.Any("Subscrptions", s.subscriber.Subscriptions()))
+	if err = m.persistence.SubscriptionsStore([]byte(s.id), buf); err != nil {
+		m.log.Error("Couldn't persist subscriptions", zap.String("ClientID", s.id), zap.Error(err))
 	}
 	return err
-}
-
-func (m *Manager) storeSubscribers() error {
-	// 4. shutdown and persist subscriptions from non-clean session
-	//for id, s := range m.subscribers {
-	m.subscribers.Range(func(k, v interface{}) bool {
-		id := k.(string)
-		s := v.(subscriber.ConnectionProvider)
-		s.Offline(false)
-		m.persistSubscriptions(id, s)
-		return true
-	})
-
-	return nil
 }
 
 func (m *Manager) onPublish(id string, p *packet.Publish) {

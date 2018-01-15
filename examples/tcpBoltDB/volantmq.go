@@ -44,7 +44,7 @@ func main() {
 	}
 
 	ops := configuration.Options{
-		LogWithTs: false,
+		LogWithTs: true,
 		LogLevel: viper.GetString("log.level"),
 		LogEnableTrace: viper.GetBool("log.enable_trace"),
 	}
