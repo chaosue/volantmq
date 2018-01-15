@@ -124,7 +124,7 @@ type Type struct {
 	keepAlive          time.Duration
 	txAvailable        chan int
 	rxRecv             []byte
-	retained           struct {
+	retained struct {
 		lock sync.Mutex
 		list []*packet.Publish
 	}
@@ -136,36 +136,6 @@ type Type struct {
 	topicAliasCurrMax uint16
 	txQuotaExceeded   bool
 	will              bool
-	// the unique message IDs(createdAt field of the PUBLISH packet) of the
-	// lasted completed message(PUBLISH packet with QoS1 or QoS2) by the remote subscribers.
-	// map[topic name]map[message createdAt]true
-	lastCompletedSubscribedMessageUniqueIds *LastCompletedSubscribedMessageUniqueIds
-}
-
-type LastCompletedSubscribedMessageUniqueIds struct{
-	lock sync.RWMutex
-	// the subscribed topics and the last retained message IDs(createdAt field of the PUBLISH packet)
-	topics *map[string]int64
-}
-
-func (lids *LastCompletedSubscribedMessageUniqueIds)Store(p *packet.Publish){
-	lids.lock.Lock()
-	topic := p.Topic()
-	(*lids.topics)[topic] = p.GetCreateTimestamp()
-	lids.lock.Unlock()
-}
-
-func(lids *LastCompletedSubscribedMessageUniqueIds)Exists(p *packet.Publish)bool{
-	lids.lock.RLock()
-	defer lids.lock.RUnlock()
-	if id, ok := (*lids.topics)[p.Topic()]; ok && p.GetCreateTimestamp() == id {
-		return true
-	}
-	return false
-}
-
-func(lids *LastCompletedSubscribedMessageUniqueIds) TopicMessageIDs()*map[string]int64{
-	return lids.topics
 }
 
 type unacknowledged struct {
@@ -190,9 +160,6 @@ func New(c *Config) (s *Type, err error) {
 		rxTopicAlias: make(map[uint16]string),
 		txTimer:      time.NewTimer(1 * time.Second),
 		will:         true,
-		lastCompletedSubscribedMessageUniqueIds: &LastCompletedSubscribedMessageUniqueIds{
-			topics:&map[string]int64{},
-		},
 	}
 
 	s.txTimer.Stop()
