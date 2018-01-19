@@ -20,6 +20,9 @@ type Config struct {
 
 	// Port tcp port to listen on
 	Port string
+
+	// Host
+	Host string
 }
 
 // InternalConfig used by server implementation to configure internal specific needs

@@ -7,6 +7,7 @@ import (
 	"github.com/VolantMQ/volantmq/packet"
 	"github.com/VolantMQ/volantmq/topics/types"
 	"go.uber.org/zap"
+	"strings"
 )
 
 func (s *Type) txShutdown() {
@@ -64,8 +65,11 @@ func (s *Type) onConnectionClose(will bool, err error) {
 			}
 		}
 
-		if err = s.Conn.Close(); err != nil {
-			s.log.Error("close connection", zap.String("ClientID", s.ID), zap.Error(err))
+		s.log.Debug("Closing client:", zap.String("ClientID", s.ID),zap.String("conn", s.remoteAddr + "->" + s.localAddr))
+		if err = s.Conn.Close(); err != nil && !(strings.HasSuffix(err.Error(), "broken pipe") && strings.HasSuffix(err.Error(), "reset by peer")){
+			s.log.Warn("close connection", zap.String("ClientID", s.ID), zap.Error(err))
+		} else {
+			s.log.Debug("Clos client:", zap.String("ClientID", s.ID),zap.String("conn", s.remoteAddr + "->" + s.localAddr))
 		}
 
 		s.rxShutdown()
@@ -78,7 +82,6 @@ func (s *Type) onConnectionClose(will bool, err error) {
 		//}
 		s.retained.list = []*packet.Publish{}
 		s.retained.lock.Unlock()
-		s.Conn = nil
 
 		params := &DisconnectParams{
 			Will:     will,
@@ -95,6 +98,7 @@ func (s *Type) onConnectionClose(will bool, err error) {
 			s.persist()
 		}
 		s.OnDisconnect(params)
+		s.Conn = nil
 	})
 }
 

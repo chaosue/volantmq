@@ -55,6 +55,7 @@ type Type struct {
 	isOnline       chan struct{}
 	offlineQoS0    bool
 	version        packet.ProtocolVersion
+	subscriptionsLock sync.RWMutex
 }
 
 // New allocate new subscriber
@@ -87,6 +88,8 @@ func (s *Type) Hash() uintptr {
 
 // HasSubscriptions either has active subscriptions or not
 func (s *Type) HasSubscriptions() bool {
+	s.subscriptionsLock.RLock()
+	defer s.subscriptionsLock.RUnlock()
 	return len(s.subscriptions) != 0
 }
 
@@ -113,15 +116,18 @@ func (s *Type) Subscriptions() Subscriptions {
 // Subscribe to given topic
 func (s *Type) Subscribe(topic string, params *topicsTypes.SubscriptionParams) (packet.QosType, []*packet.Publish, error) {
 	q, r, err := s.topics.Subscribe(topic, s, params)
-
+	s.subscriptionsLock.Lock()
 	s.subscriptions[topic] = params
+	s.subscriptionsLock.Unlock()
 	return q, r, err
 }
 
 // UnSubscribe from given topic
 func (s *Type) UnSubscribe(topic string) error {
 	err := s.topics.UnSubscribe(topic, s)
+	s.subscriptionsLock.Lock()
 	delete(s.subscriptions, topic)
+	s.subscriptionsLock.Unlock()
 	return err
 }
 
@@ -212,6 +218,8 @@ func (s *Type) OnlineRedirect(c OnlinePublish) {
 func (s *Type) Offline(shutdown bool) {
 	// if session is clean then remove all remaining subscriptions
 	if shutdown {
+		s.subscriptionsLock.Lock()
+		defer s.subscriptionsLock.Unlock()
 		for topic := range s.subscriptions {
 			s.topics.UnSubscribe(topic, s) // nolint: errcheck
 			delete(s.subscriptions, topic)

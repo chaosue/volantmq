@@ -136,6 +136,8 @@ type Type struct {
 	topicAliasCurrMax uint16
 	txQuotaExceeded   bool
 	will              bool
+	remoteAddr		  string
+	localAddr         string
 }
 
 type unacknowledged struct {
@@ -160,6 +162,8 @@ func New(c *Config) (s *Type, err error) {
 		rxTopicAlias: make(map[uint16]string),
 		txTimer:      time.NewTimer(1 * time.Second),
 		will:         true,
+		remoteAddr:   c.Conn.RemoteAddr().String(),
+		localAddr:    c.Conn.LocalAddr().String(),
 	}
 
 	s.txTimer.Stop()
@@ -273,7 +277,7 @@ func (s *Type) processIncoming(p packet.Provider) error {
 			}
 		}
 		s.log.Debug("Client requested to disconnect, session is going to be shutdown.",
-			zap.String("client_id", s.ID), zap.String("client_addr", s.Conn.RemoteAddr().String()))
+			zap.String("client_id", s.ID), zap.String("client_addr", s.remoteAddr))
 	default:
 		s.log.Error("Unsupported incoming message type on flight stage",
 			zap.String("ClientID", s.ID),
@@ -293,7 +297,9 @@ func (s *Type) loadPersistence() error {
 		return nil
 	}
 	var err error
+	var hasPersistedPackets bool
 	err = s.PersistedSession.PacketsForEach([]byte(s.ID), func(entry persistence.PersistedPacket) error {
+		hasPersistedPackets = true
 		var err error
 		var pkt packet.Provider
 		if pkt, _, err = packet.Decode(s.Version, entry.Data); err != nil {
@@ -334,7 +340,8 @@ func (s *Type) loadPersistence() error {
 
 	if err != nil {
 		return err
-	} else {
+	} else if hasPersistedPackets{
+		// clean loaded packets that had been persisted
 		err = s.PersistedSession.PacketsDelete([]byte(s.ID))
 		if err != nil && err != persistence.ErrNotFound {
 			return err
@@ -359,6 +366,7 @@ func (s *Type) persist() {
 	if s.PersistedSession == nil {
 		return
 	}
+
 	var packets []persistence.PersistedPacket
 
 	persistAppend := func(p interface{}) {
@@ -418,6 +426,9 @@ func (s *Type) persist() {
 		return true
 	})
 
+	if len(packets) == 0  {
+		return
+	}
 	if err := s.PersistedSession.PacketsStore([]byte(s.ID), packets); err != nil {
 		s.log.Error("Persist packets", zap.String("ClientID", s.ID), zap.Error(err))
 	}

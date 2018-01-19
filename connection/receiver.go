@@ -17,6 +17,17 @@ func (s *Type) keepAliveExpired() {
 }
 
 func (s *Type) rxRun(event netpoll.Event) {
+	defer func(){
+		criticalErr := recover()
+		if criticalErr != nil {
+			s.log.Error("Receiver encountered a critical error",
+					zap.String("clientID", s.ID),
+					zap.Error(criticalErr.(error)),
+					zap.Any("event", event),
+					zap.Any("conn", s.Conn),
+				)
+		}
+	}()
 	select {
 	case <-s.quit:
 		return
@@ -33,11 +44,11 @@ func (s *Type) rxRun(event netpoll.Event) {
 		}
 		if exit {
 			s.log.Debug("Client connection problem, session is going to be shutdown.", zap.Any("error_reason", event.String()),
-				zap.String("client_id", s.ID), zap.String("client_addr", s.Conn.RemoteAddr().String()))
+				zap.String("client_id", s.ID), zap.String("client_addr", s.remoteAddr))
 			s.rxRoutine(exit)
 		} else {
 			s.log.Debug("Starting new receiver routine for session",
-				zap.String("client_id", s.ID), zap.String("client_addr", s.Conn.RemoteAddr().String()))
+				zap.String("client_id", s.ID), zap.String("client_addr", s.remoteAddr))
 			go s.rxRoutine(exit)
 		}
 	}

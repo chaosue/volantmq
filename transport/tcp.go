@@ -14,7 +14,6 @@ import (
 // ConfigTCP configuration of tcp transport
 type ConfigTCP struct {
 	Scheme    string
-	Host      string
 	CertFile  string
 	KeyFile   string
 	transport *Config
@@ -30,9 +29,12 @@ type tcp struct {
 // NewConfigTCP allocate new transport config for tcp transport
 // Use of this function is preferable instead of direct allocation of ConfigTCP
 func NewConfigTCP(transport *Config) *ConfigTCP {
+	scheme := "tcp"
+	if transport.Host == "0.0.0.0" {
+		scheme = "tcp4"
+	}
 	return &ConfigTCP{
-		Scheme:    "tcp",
-		Host:      "",
+		Scheme:    scheme,
 		transport: transport,
 	}
 }
@@ -62,7 +64,7 @@ func NewTCP(config *ConfigTCP, internal *InternalConfig) (Provider, error) {
 	}
 
 	var ln net.Listener
-	if ln, err = net.Listen(config.Scheme, config.Host+":"+config.transport.Port); err != nil {
+	if ln, err = net.Listen(config.Scheme, config.transport.Host +":"+config.transport.Port); err != nil {
 		return nil, err
 	}
 

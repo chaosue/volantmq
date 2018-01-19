@@ -548,6 +548,7 @@ func (m *Manager) onSessionClose(id string, reason exitReason) {
 
 		m.Systree.Sessions().Removed(id, state)
 	} else if s, ok := m.sessions.Load(id); ok{
+		m.log.Debug("Reason Session Shutdown:", zap.Any("Reason", reason), zap.String("ClientID", id))
 		sub := s.(*sessionWrap).s.subscriber
 		if sub != nil && sub.HasSubscriptions(){
 			m.log.Debug("Persisting session state...", zap.String("ClientId", id), zap.Any("state", s.(*sessionWrap).s.getRuntimeState()))
@@ -576,30 +577,19 @@ func (m *Manager) loadSessions() error {
 	subs := map[string]*subscriberConfig{}
 
 	delayedWills := []*packet.Publish{}
-
+	toBeCleaned := [][]byte{}
 	err := m.persistence.LoadForEach(func(id []byte, state *persistence.SessionState) error {
 		sID := string(id)
 		if len(state.Errors) != 0 {
-			m.log.Error("Session load", zap.String("ClientID", sID), zap.Errors("errors", state.Errors))
-			// in separate routine for avoiding persistence dead lock.
-			go func(){
-			if err := m.persistence.SubscriptionsDelete(id); err != nil && err != persistence.ErrNotFound{
-				m.log.Error("Persisted subscriber delete", zap.String("session_id", sID), zap.Error(err))
-			} else {
-				m.log.Debug("Persisted subscriber deleted", zap.String("session_id", sID))
-			}}()
+			m.log.Warn("Session load err, preparing to wipe it", zap.String("ClientID", sID), zap.Errors("errors", state.Errors))
+			toBeCleaned = append(toBeCleaned, id)
 			return nil
 		}
 		if state.Expire != nil {
 			since, err := time.Parse(time.RFC3339, state.Expire.Since)
 			if err != nil {
-				m.log.Error("Parse expiration value", zap.String("ClientID", sID), zap.Error(err))
-				// in separate routine for avoiding persistence dead lock.
-				go func() {
-					if err := m.persistence.SubscriptionsDelete(id); err != nil && err != persistence.ErrNotFound {
-						m.log.Error("Persisted subscriber delete", zap.Error(err))
-					}
-				}()
+				m.log.Warn("Parse expiration value for persisted session error, preparing to wipe it", zap.String("ClientID", sID), zap.Error(err))
+				toBeCleaned = append(toBeCleaned, id)
 				return nil
 			}
 
@@ -632,12 +622,8 @@ func (m *Manager) loadSessions() error {
 					expireAt := since.Add(time.Duration(expireIn) * time.Second)
 
 					if time.Now().Before(expireAt) {
-						// persisted session has expired, wipe it
-						go func() {
-							if err := m.persistence.Delete(id); err != nil && err != persistence.ErrNotFound {
-								m.log.Error("Persisted session delete", zap.Error(err))
-							}
-						}()
+						m.log.Debug("Persisted session expired and to be wiped", zap.String("ClientID", string(id)))
+						toBeCleaned = append(toBeCleaned, id)
 						return nil
 					}
 				} else {
@@ -688,6 +674,12 @@ func (m *Manager) loadSessions() error {
 		return nil
 	})
 
+	for i := range toBeCleaned{
+		m.log.Debug("wipe out session:", zap.String("ClientId", string(toBeCleaned[i])))
+		if err := m.persistence.Delete(toBeCleaned[i]); err != nil && err != persistence.ErrNotFound {
+			m.log.Debug("wipe out session error", zap.Error(err),  zap.String("ClientId", string(toBeCleaned[i])))
+		}
+	}
 	for id, t := range subs {
 		sub := subscriber.New(
 			&subscriber.Config{

@@ -32,12 +32,25 @@ import (
 	_ "net/http/pprof"
 	_ "runtime/debug"
 	"fmt"
+	"flag"
 )
 
 func main() {
-	viper.SetConfigName("config_main")
-	viper.AddConfigPath("conf")
-	viper.SetConfigType("toml")
+	flags := flag.NewFlagSet("mqtt", flag.ContinueOnError)
+	configFile := flags.String("f", "", "config file path")
+	showHelp := flags.Bool("h", false, "show help")
+	flags.Parse(os.Args[1:])
+	if *showHelp {
+		flags.Usage()
+		return
+	}
+	if *configFile != "" {
+		viper.SetConfigFile(*configFile)
+	} else {
+		viper.SetConfigName("config_main")
+		viper.AddConfigPath("conf")
+		viper.SetConfigType("toml")
+	}
 	if err := viper.ReadInConfig(); err != nil {
 		panic(fmt.Sprintf("Couldn't read config file: %v", err))
 		os.Exit(1)
@@ -59,7 +72,16 @@ func main() {
 	logger.Info("Allocated cores", zap.Int("GOMAXPROCS", runtime.GOMAXPROCS(0)))
 
 	go func() {
-		http.ListenAndServe("localhost:6061", nil) // nolint: errcheck
+		debugHost := viper.GetString("debug.host")
+		debugPort := viper.GetString("debug.port")
+		if debugHost == "" {
+			debugHost = "127.0.0.1"
+		}
+		if debugPort == "" {
+			debugPort = "6061"
+		}
+		logger.Info("starting debug on:", zap.String("host", debugHost), zap.String("port", debugPort))
+		http.ListenAndServe(debugHost + ":" + debugPort, nil) // nolint: errcheck
 	}()
 
 	logger.Info("Initializing configs")
@@ -100,9 +122,23 @@ func main() {
 	serverConfig.AllowDuplicates = false
 	serverConfig.Authenticators = "internal"
 	serverConfig.AllowOverlappingSubscriptions = true
+	clientKeepAliveTime := viper.GetInt("mqtt.keepalive_timeout")
+	if clientKeepAliveTime > 0 {
+		serverConfig.KeepAlive = clientKeepAliveTime
+	}
 
+	clientConnectTimeout := viper.GetInt("mqtt.client_connect_timeout")
+	if clientConnectTimeout > 0 {
+		serverConfig.ConnectTimeout = clientConnectTimeout
+	}
+
+
+	persistDB := viper.GetString("persist.dbfile")
+	if persistDB == "" {
+		persistDB = "./persist.db"
+	}
 	serverConfig.Persistence, err = boltdb.New(&boltdb.Config{
-		File: "./persist.db",
+		File: persistDB,
 	})
 
 	if err != nil {
@@ -127,6 +163,7 @@ func main() {
 
 	transportConfig := &transport.Config{
 		Port:        viper.GetString("mqtt.tcp.port"),
+		Host:        viper.GetString("mqtt.tcp.host"),
 		AuthManager: authMng,
 	}
 	if transportConfig.Port == "" {
@@ -150,11 +187,13 @@ func main() {
 		}
 	}
 
+	logger.Info("starting service on:", zap.String("host", transportConfig.Host), zap.String("port",
+		transportConfig.Port))
 	if err = srv.ListenAndServe(config); err != nil {
 		logger.Error("Couldn't start listener", zap.Error(err))
 		return
 	}
-
+	logger.Info("started...")
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-ch

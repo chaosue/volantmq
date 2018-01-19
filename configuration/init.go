@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type config struct {
@@ -38,14 +39,18 @@ func init() {
 // if not being called default set by init() is used
 func Init(ops Options) {
 	cfg.once.Do(func() {
-		logCfg := zap.NewProductionConfig()
+		var logCfg zap.Config
+		if ops.LogLevel == "debug" {
+			logCfg = zap.NewDevelopmentConfig()
+		} else {
+			logCfg = zap.NewProductionConfig()
+		}
 
 		logCfg.DisableStacktrace = !ops.LogEnableTrace
 
 		if !ops.LogWithTs {
 			logCfg.EncoderConfig.TimeKey = ""
 		}
-
 		switch ops.LogLevel {
 		case "debug":
 			logCfg.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
@@ -63,6 +68,7 @@ func Init(ops Options) {
 			logCfg.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
 
 		}
+		logCfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 		log, _ := logCfg.Build()
 		cfg.log = log.Named("mqtt")
 	})
